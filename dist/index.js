@@ -21,7 +21,7 @@ function registerLiquidJSLanguage(monacoNs, sampleData) {
         autoClosingPairs: [
             { open: '{%', close: ' %}' },
             { open: '{{', close: ' }}' },
-            { open: '{#', close: ' #}' },
+            { open: '{#', close: ' #}' }
         ]
     });
     const liquidKeywords = ['assign', 'capture', 'endcapture', 'increment', 'decrement',
@@ -38,6 +38,46 @@ function registerLiquidJSLanguage(monacoNs, sampleData) {
         'rstrip', 'size', 'slice', 'sort', 'sort_natural', 'split', 'strip',
         'strip_html', 'strip_newlines', 'times', 'truncate', 'truncatewords',
         'uniq', 'upcase', 'url_decode', 'url_encode'];
+    monacoNs.languages.setMonarchTokensProvider(languageId, {
+        keywords: liquidKeywords,
+        tokenizer: {
+            root: [
+                [/\\{\\{/, ''],
+                [/\\{%/, ''],
+                [/\\{#/, ''],
+                [/{{/, { token: 'delimiter.expression', next: '@expression' }],
+                [/{%/, { token: 'delimiter.tag', next: '@tag' }],
+                [/{#/, { token: 'comment', next: '@comment' }]
+            ],
+            expression: [
+                [/}}/, { token: 'delimiter.expression', next: '@pop' }],
+                [/[^}]+/, '']
+            ],
+            tag: [
+                [/%}/, { token: 'delimiter.tag', next: '@pop' }],
+                [/\b(if|for|case)\b/, 'keyword.control'],
+                [/\b(endif|endfor|endcase)\b/, 'keyword.control'],
+                [/\b(else|elsif|when)\b/, 'keyword.control'],
+                [/\b(assign|capture|increment|decrement)\b/, 'keyword'],
+                [/[a-zA-Z_][\w]*/, {
+                        cases: {
+                            '@keywords': 'keyword',
+                            '@default': 'identifier'
+                        }
+                    }],
+                [/\|/, 'delimiter'],
+                [/"[^"]*"/, 'string'],
+                [/'[^']*'/, 'string'],
+                [/\d+/, 'number'],
+                [/\s+/, '']
+            ],
+            comment: [
+                [/#}/, { token: 'comment', next: '@pop' }],
+                [/[^#]+/, 'comment'],
+                [/#/, 'comment']
+            ]
+        }
+    });
     monacoNs.languages.registerCompletionItemProvider(languageId, {
         triggerCharacters: ['.', ' '],
         provideCompletionItems: (model, position) => {
@@ -45,14 +85,14 @@ function registerLiquidJSLanguage(monacoNs, sampleData) {
                 startLineNumber: 1,
                 startColumn: 1,
                 endLineNumber: position.lineNumber,
-                endColumn: position.column,
+                endColumn: position.column
             });
             const word = model.getWordUntilPosition(position);
             const range = {
                 startLineNumber: position.lineNumber,
                 endLineNumber: position.lineNumber,
                 startColumn: word.startColumn,
-                endColumn: word.endColumn,
+                endColumn: word.endColumn
             };
             // Check if we are inside a Liquid expression {{ ... }}
             const lastOpen = textUntilPosition.lastIndexOf('{{');
@@ -75,7 +115,7 @@ function registerLiquidJSLanguage(monacoNs, sampleData) {
                             label: key,
                             kind: kind,
                             insertText: key,
-                            range: range,
+                            range: range
                         };
                     });
                     return { suggestions: suggestions };
@@ -87,13 +127,13 @@ function registerLiquidJSLanguage(monacoNs, sampleData) {
                 label: keyword,
                 kind: monacoNs.languages.CompletionItemKind.Keyword,
                 insertText: keyword,
-                range: range,
+                range: range
             }));
             const topLevelKeySuggestions = Object.keys(sampleData).map(key => ({
                 label: key,
                 kind: monacoNs.languages.CompletionItemKind.Variable,
                 insertText: key,
-                range: range,
+                range: range
             }));
             return { suggestions: [...keywordSuggestions, ...topLevelKeySuggestions] };
         }
