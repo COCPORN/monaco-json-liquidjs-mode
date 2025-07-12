@@ -1,7 +1,38 @@
 import * as monaco from 'monaco-editor';
 
+interface IObject {
+    [key: string]: any;
+}
+
+function isObject(item: any): item is IObject {
+    return (item && typeof item === 'object' && !Array.isArray(item));
+}
+
+function mergeDeep(target: IObject, ...sources: IObject[]): IObject {
+    if (!sources.length) {
+        return target;
+    }
+    const source = sources.shift();
+
+    if (isObject(target) && isObject(source)) {
+        for (const key in source) {
+            if (isObject(source[key])) {
+                if (!target[key]) {
+                    Object.assign(target, { [key]: {} });
+                }
+                mergeDeep(target[key], source[key]);
+            } else {
+                Object.assign(target, { [key]: source[key] });
+            }
+        }
+    }
+
+    return mergeDeep(target, ...sources);
+}
+
+
 function getObjectFromPath(obj: any, path: string): any {
-    if (!path) {
+    if (!path || path === '') {
         return obj;
     }
     return path.split('.').reduce((currentObject, key) => {
@@ -14,24 +45,22 @@ function validate(model: monaco.editor.ITextModel, monacoNs: typeof monaco, samp
     const lines = model.getLinesContent();
     const tagStack: { tag: string, line: number }[] = [];
 
-    lines.forEach((line, i) => {
-        // Check for invalid variables
+    lines.forEach((line: string, i: number) => {
         const expressions = line.matchAll(/\{\{([^}]+)\}\}/g);
         for (const match of expressions) {
             const expression = match[1].trim().split('|')[0].trim();
-            if (getObjectFromPath(sampleData, expression) === undefined) {
+            if (expression && getObjectFromPath(sampleData, expression) === undefined) {
                 markers.push({
                     message: `Variable "${expression}" not found in data model.`,
                     severity: monacoNs.MarkerSeverity.Error,
                     startLineNumber: i + 1,
-                    startColumn: match.index + 3,
+                    startColumn: match.index! + 3,
                     endLineNumber: i + 1,
-                    endColumn: match.index + 3 + expression.length,
+                    endColumn: match.index! + 3 + expression.length,
                 });
             }
         }
 
-        // Check for mismatched tags
         const tags = line.matchAll(/\{%([^%]+)%\}/g);
         for (const match of tags) {
             const tagContent = match[1].trim();
@@ -41,27 +70,25 @@ function validate(model: monaco.editor.ITextModel, monacoNs: typeof monaco, samp
             if (['if', 'for', 'case'].includes(tagName)) {
                 tagStack.push({ tag: tagName, line: i + 1 });
             } else if (['endif', 'endfor', 'endcase'].includes(tagName)) {
-                if (tagStack.length === 0) {
+                const lastTag = tagStack.pop();
+                if (!lastTag) {
                     markers.push({
                         message: `Unexpected closing tag "${tagName}".`,
                         severity: monacoNs.MarkerSeverity.Error,
                         startLineNumber: i + 1,
-                        startColumn: match.index + 3,
+                        startColumn: match.index! + 3,
                         endLineNumber: i + 1,
-                        endColumn: match.index + 3 + tagName.length,
+                        endColumn: match.index! + 3 + tagName.length,
                     });
-                } else {
-                    const lastTag = tagStack.pop();
-                    if (lastTag && lastTag.tag !== tagName.substring(3)) {
-                        markers.push({
-                            message: `Mismatched closing tag. Expected "end${lastTag.tag}" but got "${tagName}".`,
-                            severity: monacoNs.MarkerSeverity.Error,
-                            startLineNumber: i + 1,
-                            startColumn: match.index + 3,
-                            endLineNumber: i + 1,
-                            endColumn: match.index + 3 + tagName.length,
-                        });
-                    }
+                } else if (lastTag.tag !== tagName.substring(3)) {
+                    markers.push({
+                        message: `Mismatched closing tag. Expected "end${lastTag.tag}" but got "${tagName}".`,
+                        severity: monacoNs.MarkerSeverity.Error,
+                        startLineNumber: i + 1,
+                        startColumn: match.index! + 3,
+                        endLineNumber: i + 1,
+                        endColumn: match.index! + 3 + tagName.length,
+                    });
                 }
             }
         }
@@ -81,20 +108,27 @@ function validate(model: monaco.editor.ITextModel, monacoNs: typeof monaco, samp
     monacoNs.editor.setModelMarkers(model, 'liquid-json', markers);
 }
 
-export function registerLiquidJSLanguage(monacoNs: typeof monaco, initialSampleData: object) {
+export function registerLiquidJSLanguage(monacoNs: typeof monaco, initialSampleData: object | object[]) {
     const languageId = 'liquid-json';
-    let currentSampleData = initialSampleData;
+    let currentSampleData: IObject = {};
 
-    // Register the language once
+    const setData = (data: object | object[]) => {
+        const dataArray = (Array.isArray(data) ? data : [data]) as IObject[];
+        currentSampleData = mergeDeep({}, ...dataArray);
+
+        monacoNs.editor.getModels().forEach((model: monaco.editor.ITextModel) => {
+            if (model.getLanguageId() === languageId) {
+                validate(model, monacoNs, currentSampleData);
+            }
+        });
+    };
+
+    setData(initialSampleData);
+
     monacoNs.languages.register({ id: languageId });
 
-    // Set language configuration
     monacoNs.languages.setLanguageConfiguration(languageId, {
-        brackets: [
-            ['{%', '%}'],
-            ['{{', '}}'],
-            ['{#', '#}']
-        ],
+        brackets: [['{%', '%}'], ['{{', '}}'], ['{#', '#}']],
         autoClosingPairs: [
             { open: '{%', close: ' %}' },
             { open: '{{', close: ' }}' },
@@ -102,81 +136,42 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, initialSampleD
         ]
     });
 
-    const liquidKeywords = ['assign', 'capture', 'endcapture', 'increment', 'decrement',
-        'if', 'else', 'elsif', 'endif', 'for', 'endfor', 'break',
-        'continue', 'limit', 'offset', 'range', 'reversed', 'cols',
-        'case', 'endcase', 'when', 'block', 'endblock', 'true', 'false',
-        'in', 'unless', 'endunless', 'cycle', 'tablerow', 'endtablerow',
-        'contains', 'startswith', 'endswith', 'comment', 'endcomment',
-        'raw', 'endraw', 'abs', 'append', 'at_least', 'at_most', 'capitalize', 'ceil', 'compact',
-        'concat', 'date', 'default', 'divided_by', 'downcase', 'escape',
-        'escape_once', 'first', 'floor', 'join', 'last', 'lstrip', 'map',
-        'minus', 'modulo', 'newline_to_br', 'plus', 'prepend', 'remove',
-        'remove_first', 'replace', 'replace_first', 'reverse', 'round',
-        'rstrip', 'size', 'slice', 'sort', 'sort_natural', 'split', 'strip',
-        'strip_html', 'strip_newlines', 'times', 'truncate', 'truncatewords',
-        'uniq', 'upcase', 'url_decode', 'url_encode'];
+    const liquidKeywords = ['assign', 'capture', 'endcapture', 'increment', 'decrement', 'if', 'else', 'elsif', 'endif', 'for', 'endfor', 'break', 'continue', 'limit', 'offset', 'range', 'reversed', 'cols', 'case', 'endcase', 'when', 'block', 'endblock', 'true', 'false', 'in', 'unless', 'endunless', 'cycle', 'tablerow', 'endtablerow', 'contains', 'startswith', 'endswith', 'comment', 'endcomment', 'raw', 'endraw', 'abs', 'append', 'at_least', 'at_most', 'capitalize', 'ceil', 'compact', 'concat', 'date', 'default', 'divided_by', 'downcase', 'escape', 'escape_once', 'first', 'floor', 'join', 'last', 'lstrip', 'map', 'minus', 'modulo', 'newline_to_br', 'plus', 'prepend', 'remove', 'remove_first', 'replace', 'replace_first', 'reverse', 'round', 'rstrip', 'size', 'slice', 'sort', 'sort_natural', 'split', 'strip', 'strip_html', 'strip_newlines', 'times', 'truncate', 'truncatewords', 'uniq', 'upcase', 'url_decode', 'url_encode'];
 
-    // Set Monarch tokens provider
     monacoNs.languages.setMonarchTokensProvider(languageId, {
         keywords: liquidKeywords,
         tokenizer: {
             root: [
-                [/\\{\\{/, ''],
-                [/\\{%/, ''],
-                [/\\{#/, ''],
                 [/{{/, { token: 'delimiter.expression', next: '@expression' }],
                 [/{%/, { token: 'delimiter.tag', next: '@tag' }],
                 [/{#/, { token: 'comment', next: '@comment' }]
             ],
             expression: [
                 [/}}/, { token: 'delimiter.expression', next: '@pop' }],
-                [/[^}]+/, '']
+                [/./, '']
             ],
             tag: [
                 [/%}/, { token: 'delimiter.tag', next: '@pop' }],
-                [/\b(if|for|case)\b/, 'keyword.control'],
-                [/\b(endif|endfor|endcase)\b/, 'keyword.control'],
-                [/\b(else|elsif|when)\b/, 'keyword.control'],
-                [/\b(assign|capture|increment|decrement)\b/, 'keyword'],
                 [/[a-zA-Z_][\w]*/, {
                     cases: {
                         '@keywords': 'keyword',
-                        '@default': 'identifier'
+                        '@default': ''
                     }
                 }],
-                [/\|/, 'delimiter'],
-                [/"[^"]*"/, 'string'],
-                [/'[^']*'/, 'string'],
-                [/\d+/, 'number'],
-                [/\s+/, '']
             ],
             comment: [
                 [/#}/, { token: 'comment', next: '@pop' }],
-                [/[^#]+/, 'comment'],
-                [/#/, 'comment']
+                [/./, 'comment']
             ]
         }
     });
 
-    // Register completion item provider
     monacoNs.languages.registerCompletionItemProvider(languageId, {
         triggerCharacters: ['.', ' '],
-        provideCompletionItems: (model, position) => {
-            const textUntilPosition = model.getValueInRange({
-                startLineNumber: 1,
-                startColumn: 1,
-                endLineNumber: position.lineNumber,
-                endColumn: position.column,
-            });
-
+        provideCompletionItems: (model: monaco.editor.ITextModel, position: monaco.Position) => {
+            const textUntilPosition = model.getValueInRange({ startLineNumber: 1, startColumn: 1, endLineNumber: position.lineNumber, endColumn: position.column });
             const word = model.getWordUntilPosition(position);
-            const range = {
-                startLineNumber: position.lineNumber,
-                endLineNumber: position.lineNumber,
-                startColumn: word.startColumn,
-                endColumn: word.endColumn,
-            };
+            const range = { startLineNumber: position.lineNumber, endLineNumber: position.lineNumber, startColumn: word.startColumn, endColumn: word.endColumn };
 
             const lastOpen = textUntilPosition.lastIndexOf('{{');
             const lastClose = textUntilPosition.lastIndexOf('}}');
@@ -184,71 +179,41 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, initialSampleD
             if (lastOpen > lastClose) {
                 const expressionText = textUntilPosition.substring(lastOpen + 2).trim();
                 const parts = expressionText.split(/\|/)[0].trim().split('.');
-                
                 const parentPath = parts.slice(0, -1).join('.');
                 const parentObject = getObjectFromPath(currentSampleData, parentPath);
 
                 if (parentObject && typeof parentObject === 'object') {
-                    const keys = Object.keys(parentObject);
-                    const suggestions = keys.map(key => {
-                        const value = parentObject[key];
-                        const kind = typeof value === 'object' && value !== null
-                            ? monacoNs.languages.CompletionItemKind.Module
-                            : monacoNs.languages.CompletionItemKind.Variable;
-                        
-                        return {
+                    return {
+                        suggestions: Object.keys(parentObject).map(key => ({
                             label: key,
-                            kind: kind,
+                            kind: isObject(parentObject[key]) ? monacoNs.languages.CompletionItemKind.Module : monacoNs.languages.CompletionItemKind.Variable,
                             insertText: key,
                             range: range,
-                        };
-                    });
-                    return { suggestions: suggestions };
+                        }))
+                    };
                 }
-                 return { suggestions: [] };
+                return { suggestions: [] };
             }
 
-            const keywordSuggestions = liquidKeywords.map(keyword => ({
-                label: keyword,
-                kind: monacoNs.languages.CompletionItemKind.Keyword,
-                insertText: keyword,
-                range: range,
-            }));
-
-            const topLevelKeySuggestions = Object.keys(currentSampleData).map(key => ({
-                label: key,
-                kind: monacoNs.languages.CompletionItemKind.Variable,
-                insertText: key,
-                range: range,
-            }));
-
+            const keywordSuggestions = liquidKeywords.map(keyword => ({ label: keyword, kind: monacoNs.languages.CompletionItemKind.Keyword, insertText: keyword, range: range }));
+            const topLevelKeySuggestions = Object.keys(currentSampleData).map(key => ({ label: key, kind: monacoNs.languages.CompletionItemKind.Variable, insertText: key, range: range }));
             return { suggestions: [...keywordSuggestions, ...topLevelKeySuggestions] };
         }
     });
 
-    // Setup validation
-    monacoNs.editor.onDidCreateModel(model => {
+    monacoNs.editor.onDidCreateModel((model: monaco.editor.ITextModel) => {
         if (model.getLanguageId() === languageId) {
-            validate(model, monacoNs, currentSampleData);
             const listener = model.onDidChangeContent(() => {
                 validate(model, monacoNs, currentSampleData);
             });
-            model.onWillDispose(() => {
-                listener.dispose();
-            });
+            model.onWillDispose(() => listener.dispose());
+            validate(model, monacoNs, currentSampleData);
         }
     });
 
-    // Return the update function
     return {
-        update: (newSampleData: object) => {
-            currentSampleData = newSampleData;
-            // Re-validate all models with the new data
-            monacoNs.editor.getModels().forEach(model => {
-                if (model.getLanguageId() === languageId) {
-                    validate(model, monacoNs, currentSampleData);
-                }
-            });
+        update: (newSampleData: object | object[]) => {
+            setData(newSampleData);
         }
     };
 }

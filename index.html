@@ -16,19 +16,22 @@
     var require = { paths: { 'vs': 'node_modules/monaco-editor/min/vs' } };
 </script>
 <script src="node_modules/monaco-editor/min/vs/loader.js"></script>
-<script src="dist/index.js"></script>
 <script>
-    require(['vs/editor/editor.main'], function() {
-        const initialData = {
-            "product": {
-                "title": "Example Product",
-                "price": 19.99
+    require(['vs/editor/editor.main', 'dist/index'], function(monaco, liquidJsMode) {
+        const initialData = [
+            {
+                "product": {
+                    "title": "Example Product",
+                    "price": 19.99
+                }
             },
-            "user": {
-                "name": "John Doe",
-                "email": "john.doe@example.com"
+            {
+                "user": {
+                    "name": "John Doe",
+                    "email": "john.doe@example.com"
+                }
             }
-        };
+        ];
 
         const newData = {
             "page": {
@@ -41,7 +44,7 @@
         };
 
         // Register the LiquidJS language and get the updater
-        const liquidJsUpdater = registerLiquidJSLanguage(monaco, initialData);
+        const liquidJsUpdater = liquidJsMode.registerLiquidJSLanguage(monaco, initialData);
 
         monaco.editor.create(document.getElementById('container'), {
             value: [
@@ -49,13 +52,15 @@
                 '  <p>Hello {{ user.name }}</p>',
                 '{% endif %}',
                 '',
+                '{{ product.title }}',
                 '{{ page.title }}'
             ].join('\n'),
             language: 'liquid-json'
         });
 
         document.getElementById('updateJsonBtn').addEventListener('click', () => {
-            liquidJsUpdater.update(newData);
+            // You can update with a single object or an array
+            liquidJsUpdater.update(newData); 
             alert('JSON data has been updated. Autocomplete and validation will now use the new data.');
         });
     });
