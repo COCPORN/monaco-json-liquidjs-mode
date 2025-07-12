@@ -1,15 +1,15 @@
 {
   "name": "monaco-json-liquidjs-mode",
-  "version": "1.0.0",
-  "description": "",
+  "version": "0.0.1",
+  "description": "LiquidJS mode with JSON-schema support",
   "main": "dist/index.js",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "build": "tsc",
     "start": "http-server"
   },
-  "keywords": [],
-  "author": "",
+  "keywords": ["liquidjs", "json", "template"],
+  "author": "COCPORN",
   "license": "ISC",
   "packageManager": "pnpm@10.12.4",
   "dependencies": {
