@@ -9,6 +9,78 @@ function getObjectFromPath(obj: any, path: string): any {
     }, obj);
 }
 
+function validate(model: monaco.editor.ITextModel, monacoNs: typeof monaco, sampleData: object): void {
+    const markers: monaco.editor.IMarkerData[] = [];
+    const lines = model.getLinesContent();
+    const tagStack: { tag: string, line: number }[] = [];
+
+    lines.forEach((line, i) => {
+        // Check for invalid variables
+        const expressions = line.matchAll(/\{\{([^}]+)\}\}/g);
+        for (const match of expressions) {
+            const expression = match[1].trim().split('|')[0].trim();
+            if (getObjectFromPath(sampleData, expression) === undefined) {
+                markers.push({
+                    message: `Variable "${expression}" not found in data model.`,
+                    severity: monacoNs.MarkerSeverity.Error,
+                    startLineNumber: i + 1,
+                    startColumn: match.index + 3,
+                    endLineNumber: i + 1,
+                    endColumn: match.index + 3 + expression.length,
+                });
+            }
+        }
+
+        // Check for mismatched tags
+        const tags = line.matchAll(/\{%([^%]+)%\}/g);
+        for (const match of tags) {
+            const tagContent = match[1].trim();
+            const parts = tagContent.split(' ');
+            const tagName = parts[0];
+
+            if (['if', 'for', 'case'].includes(tagName)) {
+                tagStack.push({ tag: tagName, line: i + 1 });
+            } else if (['endif', 'endfor', 'endcase'].includes(tagName)) {
+                if (tagStack.length === 0) {
+                    markers.push({
+                        message: `Unexpected closing tag "${tagName}".`,
+                        severity: monacoNs.MarkerSeverity.Error,
+                        startLineNumber: i + 1,
+                        startColumn: match.index + 3,
+                        endLineNumber: i + 1,
+                        endColumn: match.index + 3 + tagName.length,
+                    });
+                } else {
+                    const lastTag = tagStack.pop();
+                    if (lastTag && lastTag.tag !== tagName.substring(3)) {
+                        markers.push({
+                            message: `Mismatched closing tag. Expected "end${lastTag.tag}" but got "${tagName}".`,
+                            severity: monacoNs.MarkerSeverity.Error,
+                            startLineNumber: i + 1,
+                            startColumn: match.index + 3,
+                            endLineNumber: i + 1,
+                            endColumn: match.index + 3 + tagName.length,
+                        });
+                    }
+                }
+            }
+        }
+    });
+
+    tagStack.forEach(unclosedTag => {
+        markers.push({
+            message: `Unclosed tag "${unclosedTag.tag}".`,
+            severity: monacoNs.MarkerSeverity.Error,
+            startLineNumber: unclosedTag.line,
+            startColumn: 1,
+            endLineNumber: unclosedTag.line,
+            endColumn: lines[unclosedTag.line - 1].length + 1,
+        });
+    });
+
+    monacoNs.editor.setModelMarkers(model, 'liquid-json', markers);
+}
+
 export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: object): void {
     const languageId = 'liquid-json';
 
@@ -46,19 +118,19 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: ob
         keywords: liquidKeywords,
         tokenizer: {
             root: [
-                [/\\{\\{/, ''],
-                [/\\{%/, ''],
-                [/\\{#/, ''],
-                [/{{/, { token: 'delimiter.expression', next: '@expression' }],
-                [/{%/, { token: 'delimiter.tag', next: '@tag' }],
-                [/{#/, { token: 'comment', next: '@comment' }]
+                [/\\\{\\{/, ''],
+                [/\\\{%/, ''],
+                [/\\\{#/, ''],
+                [/\{\{/, { token: 'delimiter.expression', next: '@expression' }],
+                [/\{%/, { token: 'delimiter.tag', next: '@tag' }],
+                [/\{#/, { token: 'comment', next: '@comment' }]
             ],
             expression: [
-                [/}}/, { token: 'delimiter.expression', next: '@pop' }],
+                [/\}\}/, { token: 'delimiter.expression', next: '@pop' }],
                 [/[^}]+/, '']
             ],
             tag: [
-                [/%}/, { token: 'delimiter.tag', next: '@pop' }],
+                [/\%\}/, { token: 'delimiter.tag', next: '@pop' }],
                 [/\b(if|for|case)\b/, 'keyword.control'],
                 [/\b(endif|endfor|endcase)\b/, 'keyword.control'],
                 [/\b(else|elsif|when)\b/, 'keyword.control'],
@@ -76,9 +148,9 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: ob
                 [/\s+/, '']
             ],
             comment: [
-                [/#}/, { token: 'comment', next: '@pop' }],
+                [/\#\}/, { token: 'comment', next: '@pop' }],
                 [/[^#]+/, 'comment'],
-                [/#/, 'comment']
+                [/\#/, 'comment']
             ]
         }
     });
@@ -150,6 +222,15 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: ob
             }));
 
             return { suggestions: [...keywordSuggestions, ...topLevelKeySuggestions] };
+        }
+    });
+
+    monacoNs.editor.onDidCreateModel(model => {
+        if (model.getLanguageId() === languageId) {
+            validate(model, monacoNs, sampleData);
+            model.onDidChangeContent(() => {
+                validate(model, monacoNs, sampleData);
+            });
         }
     });
 }
