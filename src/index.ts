@@ -1,21 +1,31 @@
 import * as monaco from 'monaco-editor';
 
-function getNestedObjectPaths(obj: {[key: string]: any}, parentKey: string = ''): string[] {
-    let keys: string[] = [];
-    for (const key in obj) {
-        if (obj.hasOwnProperty(key)) {
-            const newKey = parentKey ? `${parentKey}.${key}` : key;
-            keys.push(newKey);
-            if (typeof obj[key] === 'object' && obj[key] !== null && !Array.isArray(obj[key])) {
-                keys = keys.concat(getNestedObjectPaths(obj[key], newKey));
-            }
-        }
+function getObjectFromPath(obj: any, path: string): any {
+    if (!path) {
+        return obj;
     }
-    return keys;
+    return path.split('.').reduce((currentObject, key) => {
+        return currentObject && typeof currentObject === 'object' ? currentObject[key] : undefined;
+    }, obj);
 }
 
 export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: object): void {
-    monacoNs.languages.register({ id: 'liquid-json' });
+    const languageId = 'liquid-json';
+
+    monacoNs.languages.register({ id: languageId });
+
+    monacoNs.languages.setLanguageConfiguration(languageId, {
+        brackets: [
+            ['{%', '%}'],
+            ['{{', '}}'],
+            ['{#', '#}']
+        ],
+        autoClosingPairs: [
+            { open: '{%', close: ' %}' },
+            { open: '{{', close: ' }}' },
+            { open: '{#', close: ' #}' },
+        ]
+    });
 
     const liquidKeywords = ['assign', 'capture', 'endcapture', 'increment', 'decrement',
         'if', 'else', 'elsif', 'endif', 'for', 'endfor', 'break',
@@ -23,10 +33,7 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: ob
         'case', 'endcase', 'when', 'block', 'endblock', 'true', 'false',
         'in', 'unless', 'endunless', 'cycle', 'tablerow', 'endtablerow',
         'contains', 'startswith', 'endswith', 'comment', 'endcomment',
-        'raw', 'endraw', 'editable', 'endentitylist', 'endentityview', 'endinclude',
-        'endmarker', 'entitylist', 'entityview', 'forloop', 'image', 'include',
-        'marker', 'outputcache', 'plugin', 'style', 'text', 'widget',
-        'abs', 'append', 'at_least', 'at_most', 'capitalize', 'ceil', 'compact',
+        'raw', 'endraw', 'abs', 'append', 'at_least', 'at_most', 'capitalize', 'ceil', 'compact',
         'concat', 'date', 'default', 'divided_by', 'downcase', 'escape',
         'escape_once', 'first', 'floor', 'join', 'last', 'lstrip', 'map',
         'minus', 'modulo', 'newline_to_br', 'plus', 'prepend', 'remove',
@@ -35,62 +42,73 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: ob
         'strip_html', 'strip_newlines', 'times', 'truncate', 'truncatewords',
         'uniq', 'upcase', 'url_decode', 'url_encode'];
 
-    const dataKeys = getNestedObjectPaths(sampleData);
-
-    monacoNs.languages.registerCompletionItemProvider('liquid-json', {
+    monacoNs.languages.registerCompletionItemProvider(languageId, {
+        triggerCharacters: ['.', ' '],
         provideCompletionItems: (model, position) => {
+            const textUntilPosition = model.getValueInRange({
+                startLineNumber: 1,
+                startColumn: 1,
+                endLineNumber: position.lineNumber,
+                endColumn: position.column,
+            });
+
             const word = model.getWordUntilPosition(position);
             const range = {
                 startLineNumber: position.lineNumber,
                 endLineNumber: position.lineNumber,
                 startColumn: word.startColumn,
-                endColumn: word.endColumn
+                endColumn: word.endColumn,
             };
 
-            const lineContent = model.getLineContent(position.lineNumber);
-            const textBefore = lineContent.substring(0, position.column -1);
+            // Check if we are inside a Liquid expression {{ ... }}
+            const lastOpen = textUntilPosition.lastIndexOf('{{');
+            const lastClose = textUntilPosition.lastIndexOf('}}');
 
-            let suggestions = [];
+            if (lastOpen > lastClose) {
+                // We are inside an expression
+                const expressionText = textUntilPosition.substring(lastOpen + 2).trim();
+                const parts = expressionText.split(/\|/)[0].trim().split('.');
+                const currentWord = parts[parts.length - 1];
 
-            // Keyword suggestions
-            suggestions.push(...liquidKeywords.map(keyword => ({
+                const parentPath = parts.slice(0, -1).join('.');
+                const parentObject = getObjectFromPath(sampleData, parentPath);
+
+                if (parentObject && typeof parentObject === 'object') {
+                    const keys = Object.keys(parentObject);
+                    const suggestions = keys.map(key => {
+                        const value = parentObject[key];
+                        const kind = typeof value === 'object' && value !== null
+                            ? monacoNs.languages.CompletionItemKind.Module
+                            : monacoNs.languages.CompletionItemKind.Variable;
+                        
+                        return {
+                            label: key,
+                            kind: kind,
+                            insertText: key,
+                            range: range,
+                        };
+                    });
+                    return { suggestions: suggestions };
+                }
+                 return { suggestions: [] };
+            }
+
+            // If not in an expression, suggest keywords and top-level keys
+            const keywordSuggestions = liquidKeywords.map(keyword => ({
                 label: keyword,
                 kind: monacoNs.languages.CompletionItemKind.Keyword,
                 insertText: keyword,
-                range: range
-            })));
-            
-            // Nested object suggestions
-            const liquidExpressionMatch = textBefore.match(/\{\{\s*([\w\.]*)$/);
-            if(liquidExpressionMatch) {
-                const currentPath = liquidExpressionMatch[1];
-                const parts = currentPath.split('.');
-                
-                let keys = dataKeys;
-                if (parts.length > 1) {
-                    const parentPath = parts.slice(0, -1).join('.');
-                    keys = dataKeys.filter(k => k.startsWith(parentPath + '.') && k.split('.').length === parts.length);
-                } else {
-                    keys = dataKeys.filter(k => k.split('.').length === 1);
-                }
+                range: range,
+            }));
 
-                suggestions.push(...keys.map(key => ({
-                    label: key,
-                    kind: monacoNs.languages.CompletionItemKind.Variable,
-                    insertText: key,
-                    range: range
-                })));
-            } else {
-                 suggestions.push(...dataKeys.filter(k => k.split('.').length === 1).map(key => ({
-                    label: key,
-                    kind: monacoNs.languages.CompletionItemKind.Variable,
-                    insertText: key,
-                    range: range
-                })));
-            }
+            const topLevelKeySuggestions = Object.keys(sampleData).map(key => ({
+                label: key,
+                kind: monacoNs.languages.CompletionItemKind.Variable,
+                insertText: key,
+                range: range,
+            }));
 
-
-            return { suggestions: suggestions };
+            return { suggestions: [...keywordSuggestions, ...topLevelKeySuggestions] };
         }
     });
 }
