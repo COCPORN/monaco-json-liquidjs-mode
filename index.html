@@ -9,7 +9,8 @@
 <body>
 
 <h2>Monaco Editor LiquidJS Mode</h2>
-<div id="container" style="width:800px;height:600px;border:1px solid grey"></div>
+<button id="updateJsonBtn">Update JSON Data</button>
+<div id="container" style="width:800px;height:600px;border:1px solid grey; margin-top: 10px;"></div>
 
 <script>
     var require = { paths: { 'vs': 'node_modules/monaco-editor/min/vs' } };
@@ -18,7 +19,7 @@
 <script src="dist/index.js"></script>
 <script>
     require(['vs/editor/editor.main'], function() {
-        const sampleData = {
+        const initialData = {
             "product": {
                 "title": "Example Product",
                 "price": 19.99
@@ -29,16 +30,33 @@
             }
         };
 
-        // Register the LiquidJS language
-        registerLiquidJSLanguage(monaco, sampleData);
+        const newData = {
+            "page": {
+                "title": "New Page",
+                "author": "Jane Smith"
+            },
+            "site": {
+                "name": "My Awesome Site"
+            }
+        };
+
+        // Register the LiquidJS language and get the updater
+        const liquidJsUpdater = registerLiquidJSLanguage(monaco, initialData);
 
         monaco.editor.create(document.getElementById('container'), {
             value: [
-                '{% for item in collection %}',
-                '  {{ item. }}',
-                '{% endfor %}'
+                '{% if user.name == "John Doe" %}',
+                '  <p>Hello {{ user.name }}</p>',
+                '{% endif %}',
+                '',
+                '{{ page.title }}'
             ].join('\n'),
             language: 'liquid-json'
+        });
+
+        document.getElementById('updateJsonBtn').addEventListener('click', () => {
+            liquidJsUpdater.update(newData);
+            alert('JSON data has been updated. Autocomplete and validation will now use the new data.');
         });
     });
 </script>

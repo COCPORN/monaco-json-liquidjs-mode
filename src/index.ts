@@ -81,11 +81,14 @@ function validate(model: monaco.editor.ITextModel, monacoNs: typeof monaco, samp
     monacoNs.editor.setModelMarkers(model, 'liquid-json', markers);
 }
 
-export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: object): void {
+export function registerLiquidJSLanguage(monacoNs: typeof monaco, initialSampleData: object) {
     const languageId = 'liquid-json';
+    let currentSampleData = initialSampleData;
 
+    // Register the language once
     monacoNs.languages.register({ id: languageId });
 
+    // Set language configuration
     monacoNs.languages.setLanguageConfiguration(languageId, {
         brackets: [
             ['{%', '%}'],
@@ -95,7 +98,7 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: ob
         autoClosingPairs: [
             { open: '{%', close: ' %}' },
             { open: '{{', close: ' }}' },
-            { open: '{#', close: ' #}' }
+            { open: '{#', close: ' #}' },
         ]
     });
 
@@ -114,23 +117,24 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: ob
         'strip_html', 'strip_newlines', 'times', 'truncate', 'truncatewords',
         'uniq', 'upcase', 'url_decode', 'url_encode'];
 
+    // Set Monarch tokens provider
     monacoNs.languages.setMonarchTokensProvider(languageId, {
         keywords: liquidKeywords,
         tokenizer: {
             root: [
-                [/\\\{\\{/, ''],
-                [/\\\{%/, ''],
-                [/\\\{#/, ''],
-                [/\{\{/, { token: 'delimiter.expression', next: '@expression' }],
-                [/\{%/, { token: 'delimiter.tag', next: '@tag' }],
-                [/\{#/, { token: 'comment', next: '@comment' }]
+                [/\\{\\{/, ''],
+                [/\\{%/, ''],
+                [/\\{#/, ''],
+                [/{{/, { token: 'delimiter.expression', next: '@expression' }],
+                [/{%/, { token: 'delimiter.tag', next: '@tag' }],
+                [/{#/, { token: 'comment', next: '@comment' }]
             ],
             expression: [
-                [/\}\}/, { token: 'delimiter.expression', next: '@pop' }],
+                [/}}/, { token: 'delimiter.expression', next: '@pop' }],
                 [/[^}]+/, '']
             ],
             tag: [
-                [/\%\}/, { token: 'delimiter.tag', next: '@pop' }],
+                [/%}/, { token: 'delimiter.tag', next: '@pop' }],
                 [/\b(if|for|case)\b/, 'keyword.control'],
                 [/\b(endif|endfor|endcase)\b/, 'keyword.control'],
                 [/\b(else|elsif|when)\b/, 'keyword.control'],
@@ -148,13 +152,14 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: ob
                 [/\s+/, '']
             ],
             comment: [
-                [/\#\}/, { token: 'comment', next: '@pop' }],
+                [/#}/, { token: 'comment', next: '@pop' }],
                 [/[^#]+/, 'comment'],
-                [/\#/, 'comment']
+                [/#/, 'comment']
             ]
         }
     });
 
+    // Register completion item provider
     monacoNs.languages.registerCompletionItemProvider(languageId, {
         triggerCharacters: ['.', ' '],
         provideCompletionItems: (model, position) => {
@@ -162,7 +167,7 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: ob
                 startLineNumber: 1,
                 startColumn: 1,
                 endLineNumber: position.lineNumber,
-                endColumn: position.column
+                endColumn: position.column,
             });
 
             const word = model.getWordUntilPosition(position);
@@ -170,21 +175,18 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: ob
                 startLineNumber: position.lineNumber,
                 endLineNumber: position.lineNumber,
                 startColumn: word.startColumn,
-                endColumn: word.endColumn
+                endColumn: word.endColumn,
             };
 
-            // Check if we are inside a Liquid expression {{ ... }}
             const lastOpen = textUntilPosition.lastIndexOf('{{');
             const lastClose = textUntilPosition.lastIndexOf('}}');
 
             if (lastOpen > lastClose) {
-                // We are inside an expression
                 const expressionText = textUntilPosition.substring(lastOpen + 2).trim();
                 const parts = expressionText.split(/\|/)[0].trim().split('.');
-                const currentWord = parts[parts.length - 1];
-
+                
                 const parentPath = parts.slice(0, -1).join('.');
-                const parentObject = getObjectFromPath(sampleData, parentPath);
+                const parentObject = getObjectFromPath(currentSampleData, parentPath);
 
                 if (parentObject && typeof parentObject === 'object') {
                     const keys = Object.keys(parentObject);
@@ -198,7 +200,7 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: ob
                             label: key,
                             kind: kind,
                             insertText: key,
-                            range: range
+                            range: range,
                         };
                     });
                     return { suggestions: suggestions };
@@ -206,31 +208,47 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, sampleData: ob
                  return { suggestions: [] };
             }
 
-            // If not in an expression, suggest keywords and top-level keys
             const keywordSuggestions = liquidKeywords.map(keyword => ({
                 label: keyword,
                 kind: monacoNs.languages.CompletionItemKind.Keyword,
                 insertText: keyword,
-                range: range
+                range: range,
             }));
 
-            const topLevelKeySuggestions = Object.keys(sampleData).map(key => ({
+            const topLevelKeySuggestions = Object.keys(currentSampleData).map(key => ({
                 label: key,
                 kind: monacoNs.languages.CompletionItemKind.Variable,
                 insertText: key,
-                range: range
+                range: range,
             }));
 
             return { suggestions: [...keywordSuggestions, ...topLevelKeySuggestions] };
         }
     });
 
+    // Setup validation
     monacoNs.editor.onDidCreateModel(model => {
         if (model.getLanguageId() === languageId) {
-            validate(model, monacoNs, sampleData);
-            model.onDidChangeContent(() => {
-                validate(model, monacoNs, sampleData);
+            validate(model, monacoNs, currentSampleData);
+            const listener = model.onDidChangeContent(() => {
+                validate(model, monacoNs, currentSampleData);
+            });
+            model.onWillDispose(() => {
+                listener.dispose();
             });
         }
     });
+
+    // Return the update function
+    return {
+        update: (newSampleData: object) => {
+            currentSampleData = newSampleData;
+            // Re-validate all models with the new data
+            monacoNs.editor.getModels().forEach(model => {
+                if (model.getLanguageId() === languageId) {
+                    validate(model, monacoNs, currentSampleData);
+                }
+            });
+        }
+    };
 }
