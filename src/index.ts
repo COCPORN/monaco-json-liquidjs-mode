@@ -145,16 +145,16 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, initialSampleD
         keywords: liquidKeywords,
         tokenizer: {
             root: [
-                [/{{/, { token: 'delimiter.expression', next: '@expression' }],
-                [/{%/, { token: 'delimiter.tag', next: '@tag' }],
-                [/{#/, { token: 'comment', next: '@comment' }]
+                [/\{\{/, { token: 'delimiter.expression', next: '@expression' }],
+                [/\{%/, { token: 'delimiter.tag', next: '@tag' }],
+                [/\{#/, { token: 'comment', next: '@comment' }]
             ],
             expression: [
-                [/}}/, { token: 'delimiter.expression', next: '@pop' }],
+                [/\}\} /, { token: 'delimiter.expression', next: '@pop' }],
                 [/./, '']
             ],
             tag: [
-                [/%}/, { token: 'delimiter.tag', next: '@pop' }],
+                [/%\}/, { token: 'delimiter.tag', next: '@pop' }],
                 [/[a-zA-Z_][\w]*/, {
                     cases: {
                         '@keywords': 'keyword',
@@ -163,7 +163,7 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, initialSampleD
                 }],
             ],
             comment: [
-                [/#}/, { token: 'comment', next: '@pop' }],
+                [/#\}/, { token: 'comment', next: '@pop' }],
                 [/./, 'comment']
             ]
         }
@@ -212,37 +212,40 @@ export function registerLiquidJSLanguage(monacoNs: typeof monaco, initialSampleD
     monacoNs.languages.registerHoverProvider(languageId, {
         provideHover: (model, position) => {
             const lineContent = model.getLineContent(position.lineNumber);
-            const matches = lineContent.matchAll(/\{\{\s*([^}]+?)\s*\}\}|/g);
+            const tagRegex = /({{|{%)\s*([^}]+?)\s*(%}|}})/g;
+            let match;
 
-            for (const match of matches) {
-                const expression = match[1];
-                if (!expression) continue;
+            while ((match = tagRegex.exec(lineContent)) !== null) {
+                const expressionContent = match[2];
+                if (!expressionContent) continue;
 
-                const matchStartIndex = match.index!;
+                const matchStartIndex = match.index;
                 const matchEndIndex = matchStartIndex + match[0].length;
 
                 if (position.column >= matchStartIndex && position.column <= matchEndIndex) {
-                    const variablePath = expression.trim().split('|')[0].trim();
-                    if (!variablePath) continue;
+                    // Find all potential variable paths in the expression
+                    const varRegex = /[a-zA-Z_][\w\.]*/g;
+                    let varMatch;
+                    while ((varMatch = varRegex.exec(expressionContent)) !== null) {
+                        const variablePath = varMatch[0];
+                        const varStartIndex = expressionContent.indexOf(variablePath) + matchStartIndex + match[1].length;
+                        const varEndIndex = varStartIndex + variablePath.length;
 
-                    const value = getObjectFromPath(currentSampleData, variablePath);
+                        if (position.column >= varStartIndex && position.column <= varEndIndex) {
+                            const value = getObjectFromPath(currentSampleData, variablePath);
+                            if (value !== undefined) {
+                                const valueString = typeof value === 'object' ? JSON.stringify(value, null, 2) : value.toString();
+                                const range = new monacoNs.Range(position.lineNumber, varStartIndex, position.lineNumber, varEndIndex);
 
-                    if (value !== undefined) {
-                        const valueString = typeof value === 'object' ? JSON.stringify(value, null, 2) : value.toString();
-                        const range = new monacoNs.Range(
-                            position.lineNumber,
-                            matchStartIndex + match[0].indexOf(variablePath),
-                            position.lineNumber,
-                            matchStartIndex + match[0].indexOf(variablePath) + variablePath.length
-                        );
-
-                        return {
-                            range: range,
-                            contents: [
-                                { value: `**${variablePath}**` },
-                                { value: '```' + (typeof value) + '\n' + valueString + '\n```' }
-                            ]
-                        };
+                                return {
+                                    range: range,
+                                    contents: [
+                                        { value: `**${variablePath}**` },
+                                        { value: '```' + (typeof value) + '\n' + valueString + '\n```' }
+                                    ]
+                                };
+                            }
+                        }
                     }
                 }
             }

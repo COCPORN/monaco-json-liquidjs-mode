@@ -79,6 +79,9 @@ Live preview pane integration for rendering the template with the example data.
 
 Ability to mark parts of the JSON as optional or repeatable (e.g., for for loops).
 
+**Hover Provider for Logic Tags**: Extend the hover provider to show tooltips for variables inside logic tags (`{% if user.name == 'John' %}`), not just output tags.
+
+
 ## Preferred technology
 
 Prefer using `pnpm` for package management.
