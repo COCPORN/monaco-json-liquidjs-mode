@@ -38,18 +38,21 @@ define(["require", "exports"], function (require, exports) {
         const lines = model.getLinesContent();
         const tagStack = [];
         lines.forEach((line, i) => {
-            const expressions = line.matchAll(/\{\{([^}]+)\}\}/g);
+            const expressions = line.matchAll(/\{\{([^}]+?)\}\}|/g);
             for (const match of expressions) {
-                const expression = match[1].trim().split('|')[0].trim();
-                if (expression && getObjectFromPath(sampleData, expression) === undefined) {
-                    markers.push({
-                        message: `Variable "${expression}" not found in data model.`,
-                        severity: monacoNs.MarkerSeverity.Error,
-                        startLineNumber: i + 1,
-                        startColumn: match.index + 3,
-                        endLineNumber: i + 1,
-                        endColumn: match.index + 3 + expression.length,
-                    });
+                const expressionContent = match[1];
+                if (expressionContent) {
+                    const expression = expressionContent.trim().split('|')[0].trim();
+                    if (expression && getObjectFromPath(sampleData, expression) === undefined) {
+                        markers.push({
+                            message: `Variable "${expression}" not found in data model.`,
+                            severity: monacoNs.MarkerSeverity.Error,
+                            startLineNumber: i + 1,
+                            startColumn: match.index + 3,
+                            endLineNumber: i + 1,
+                            endColumn: match.index + 3 + expression.length,
+                        });
+                    }
                 }
             }
             const tags = line.matchAll(/\{%([^%]+)%\}/g);
@@ -173,8 +176,44 @@ define(["require", "exports"], function (require, exports) {
                     return { suggestions: [] };
                 }
                 const keywordSuggestions = liquidKeywords.map(keyword => ({ label: keyword, kind: monacoNs.languages.CompletionItemKind.Keyword, insertText: keyword, range: range }));
-                const topLevelKeySuggestions = Object.keys(currentSampleData).map(key => ({ label: key, kind: monacoNs.languages.CompletionItemKind.Variable, insertText: key, range: range }));
+                const topLevelKeySuggestions = Object.keys(currentSampleData).map(key => ({
+                    label: key,
+                    kind: monacoNs.languages.CompletionItemKind.Variable,
+                    insertText: key,
+                    range: range
+                }));
                 return { suggestions: [...keywordSuggestions, ...topLevelKeySuggestions] };
+            }
+        });
+        monacoNs.languages.registerHoverProvider(languageId, {
+            provideHover: (model, position) => {
+                const lineContent = model.getLineContent(position.lineNumber);
+                const matches = lineContent.matchAll(/\{\{\s*([^}]+?)\s*\}\}|/g);
+                for (const match of matches) {
+                    const expression = match[1];
+                    if (!expression)
+                        continue;
+                    const matchStartIndex = match.index;
+                    const matchEndIndex = matchStartIndex + match[0].length;
+                    if (position.column >= matchStartIndex && position.column <= matchEndIndex) {
+                        const variablePath = expression.trim().split('|')[0].trim();
+                        if (!variablePath)
+                            continue;
+                        const value = getObjectFromPath(currentSampleData, variablePath);
+                        if (value !== undefined) {
+                            const valueString = typeof value === 'object' ? JSON.stringify(value, null, 2) : value.toString();
+                            const range = new monacoNs.Range(position.lineNumber, matchStartIndex + match[0].indexOf(variablePath), position.lineNumber, matchStartIndex + match[0].indexOf(variablePath) + variablePath.length);
+                            return {
+                                range: range,
+                                contents: [
+                                    { value: `**${variablePath}**` },
+                                    { value: '```' + (typeof value) + '\n' + valueString + '\n```' }
+                                ]
+                            };
+                        }
+                    }
+                }
+                return;
             }
         });
         monacoNs.editor.onDidCreateModel((model) => {
